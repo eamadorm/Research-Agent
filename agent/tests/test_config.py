@@ -35,6 +35,7 @@ def test_mcp_servers_config_defaults_to_localhost_urls():
     assert config.BIGQUERY_URL == "http://localhost:8080"
     assert config.DRIVE_URL == "http://localhost:8081"
     assert config.GCS_URL == "http://localhost:8082"
+    assert config.CALENDAR_URL == "http://localhost:8083"
 
 
 def test_agent_config_validation():
@@ -49,6 +50,12 @@ def test_agent_config_validation():
             AgentConfig()
         assert "Input should be less than or equal to 1" in str(exc_info.value)
 
+    mock_env_invalid_low = {"TEMPERATURE": "-0.5"}
+    with patch.dict(os.environ, mock_env_invalid_low, clear=True):
+        with pytest.raises(ValidationError) as exc_info:
+            AgentConfig()
+        assert "Input should be greater than or equal to 0" in str(exc_info.value)
+
 
 def test_mcp_servers_config():
     """Test that MCP server config correctly assigns custom timeout values."""
@@ -56,7 +63,7 @@ def test_mcp_servers_config():
         "GENERAL_TIMEOUT": "120",
         "BIGQUERY_ENDPOINT": "/custom-mcp",
         "DRIVE_URL": "http://localhost:9090",
-        "DRIVE_OAUTH_SCOPES": '["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/drive.file"]',
+        "DRIVE_OAUTH_SCOPES": '["https://www.googleapis.com/auth/drive"]',
         "BIGQUERY_OAUTH_SCOPES": '["https://www.googleapis.com/auth/bigquery"]',
         "GOOGLE_OAUTH_CLIENT_ID": "shared-google-client-id",
         "GEMINI_GOOGLE_AUTH_ID": "shared-google-auth-id",
@@ -69,11 +76,34 @@ def test_mcp_servers_config():
         assert config.GOOGLE_OAUTH_CLIENT_ID == "shared-google-client-id"
         assert config.GEMINI_GOOGLE_AUTH_ID == "shared-google-auth-id"
         assert config.DRIVE_OAUTH_SCOPES == {
-            "https://www.googleapis.com/auth/drive.readonly": "google drive access",
-            "https://www.googleapis.com/auth/drive.file": "google drive access",
+            "https://www.googleapis.com/auth/drive": "google drive access",
         }
         assert config.BIGQUERY_OAUTH_SCOPES == {
             "https://www.googleapis.com/auth/bigquery": "google bigquery access",
+        }
+
+
+def test_mcp_servers_config_oauth_scopes_validator_dict_vs_list_behavior():
+    """Test that validate_oauth_scopes correctly parses both JSON lists and dicts from env vars."""
+
+    # Testing Dict Parsing directly bypassing the list assumption
+    mock_env_dict = {
+        "DRIVE_OAUTH_SCOPES": '{"https://custom.scope/drive": "custom drive access"}'
+    }
+    with patch.dict(os.environ, mock_env_dict, clear=True):
+        config = MCPServersConfig()
+        assert config.DRIVE_OAUTH_SCOPES == {
+            "https://custom.scope/drive": "custom drive access"
+        }
+
+    # Testing List of string values hitting the enum fallback mapping
+    mock_env_list = {
+        "CALENDAR_OAUTH_SCOPES": '["https://www.googleapis.com/auth/calendar.events.readonly"]'
+    }
+    with patch.dict(os.environ, mock_env_list, clear=True):
+        config_list = MCPServersConfig()
+        assert config_list.CALENDAR_OAUTH_SCOPES == {
+            "https://www.googleapis.com/auth/calendar.events.readonly": "google calendar access"
         }
 
 
