@@ -43,22 +43,30 @@ module "ekb_pipeline_cloud_run" {
     ekb-pipeline = {
       image = "${local.cloud_run_image}:${var.ekb_pipeline_cloud_run_image_tag}"
       env = merge(var.ekb_pipeline_cloud_run_env, {
-        PROJECT_ID         = var.project_id
-        GEMINI_LOCATION    = var.main_region
-        BQ_DATASET         = google_bigquery_dataset.knowledge_base.dataset_id
-        BQ_TABLE           = google_bigquery_table.documents_metadata.table_id
-        BQ_CHUNKS_TABLE    = google_bigquery_table.documents_chunks.table_id
-        BQ_METADATA_TABLE  = google_bigquery_table.documents_metadata.table_id
-        BQ_JOBS_TABLE      = google_bigquery_table.ingestion_jobs.table_id
-        RAG_STAGING_BUCKET = google_storage_bucket.rag_staging.name
+        PROJECT_ID            = var.project_id
+        GEMINI_LOCATION       = var.main_region
+        BQ_DATASET            = google_bigquery_dataset.knowledge_base.dataset_id
+        BQ_CHUNKS_TABLE       = google_bigquery_table.documents_chunks.table_id
+        BQ_METADATA_TABLE     = google_bigquery_table.documents_metadata.table_id
+        BQ_JOBS_TABLE         = google_bigquery_table.ingestion_jobs.table_id
+        RAG_STAGING_BUCKET    = google_storage_bucket.rag_staging.name
+        TASKS_QUEUE_ID        = google_cloud_tasks_queue.ekb_ingestion_queue.name
+        TASKS_LOCATION        = var.main_region
+        SERVICE_ACCOUNT_EMAIL = module.ekb-pipeline-service-account.email
       })
+      resources = {
+        limits = {
+          cpu    = var.ekb_pipeline_cloud_run_cpu
+          memory = var.ekb_pipeline_cloud_run_memory
+        }
+      }
     }
   }
 
   service_config = {
     timeout = "3600s"
     scaling = {
-      max_instance_count = 10
+      max_instance_count = 100
     }
   }
 
@@ -66,7 +74,8 @@ module "ekb_pipeline_cloud_run" {
   iam = {
     "roles/run.invoker" = [
       "group:${var.developers_group_email}",
-      "serviceAccount:${var.agent_service_account_email}"
+      "serviceAccount:${var.agent_service_account_email}",
+      "serviceAccount:${module.ekb-pipeline-service-account.email}"
     ]
   }
 
@@ -78,6 +87,37 @@ module "ekb_pipeline_cloud_run" {
   depends_on = [
     module.enable_apis
   ]
+}
+
+################ Cloud Tasks ################
+
+resource "google_cloud_tasks_queue" "ekb_ingestion_queue" {
+  name     = "ekb-ingestion-queue"
+  project  = var.project_id
+  location = var.main_region
+
+  rate_limits {
+    max_concurrent_dispatches = 10
+    max_dispatches_per_second = 5
+  }
+
+  retry_config {
+    max_attempts = 5
+    min_backoff  = "10s"
+    max_backoff  = "300s"
+  }
+}
+
+resource "google_project_iam_member" "cloudtasks_enqueuer" {
+  project = var.project_id
+  role    = "roles/cloudtasks.enqueuer"
+  member  = "serviceAccount:${module.ekb-pipeline-service-account.email}"
+}
+
+resource "google_project_iam_member" "cloudtasks_oidc_creator" {
+  project = var.project_id
+  role    = "roles/iam.serviceAccountUser"
+  member  = "serviceAccount:${module.ekb-pipeline-service-account.email}"
 }
 
 ################ BigQuery ML Model ################

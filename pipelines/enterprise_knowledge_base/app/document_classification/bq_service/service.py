@@ -1,6 +1,6 @@
 from google.cloud import bigquery
 from loguru import logger
-from ..config import EKB_CONFIG
+from ...config import EKB_CONFIG
 from .schemas import (
     BQMetadataRecord,
     GetLatestVersionRequest,
@@ -45,7 +45,7 @@ class BQService:
             None
         """
         self.dataset_id = EKB_CONFIG.BQ_DATASET
-        self.table_id = EKB_CONFIG.BQ_TABLE
+        self.table_id = EKB_CONFIG.BQ_METADATA_TABLE
 
     def insert_metadata(self, record: BQMetadataRecord) -> bool:
         """Performs a Load Job insert of a metadata record into BigQuery.

@@ -12,7 +12,8 @@ project_services = {
     "run.googleapis.com",
     "dlp.googleapis.com",
     "aiplatform.googleapis.com",
-    "bigqueryconnection.googleapis.com"
+    "bigqueryconnection.googleapis.com",
+    "cloudtasks.googleapis.com"
   ],
 }
 
@@ -37,6 +38,8 @@ artifact_registry_name = "mcp-servers"
 
 ekb_pipeline_cloud_run_name      = "ekb-pipeline"
 ekb_pipeline_cloud_run_image_tag = "latest"
+ekb_pipeline_cloud_run_cpu       = "8"
+ekb_pipeline_cloud_run_memory    = "32Gi"
 
 ekb_pipeline_cloud_run_env = {
   "LOG_LEVEL" = "INFO"

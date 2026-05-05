@@ -1,5 +1,5 @@
 import sys
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Request
 from loguru import logger
 
 from .orchestrator import KBIngestionPipeline
@@ -9,8 +9,10 @@ from .schemas import (
     JobStatusResponse,
     JobStatus,
 )
-from .document_classification.config import EKB_CONFIG
+from .config import EKB_CONFIG
 from .jobs import JobService
+from .cloud_tasks.service import CloudTasksService
+from .cloud_tasks.schemas import TaskPayload
 
 
 def custom_log_format(record: dict) -> str:
@@ -40,60 +42,20 @@ app = FastAPI(
 
 job_service = JobService()
 ekb_pipeline = KBIngestionPipeline(EKB_CONFIG.PROJECT_ID)
-
-
-def run_pipeline_task(job_id: str, request: OrchestratorRunRequest) -> None:
-    """
-    Background task to execute the sequential EKB pipeline (Classification -> RAG).
-    Updates the BigQuery job status upon completion or failure.
-
-    Args:
-        job_id: str -> The unique identifier of the background job.
-        request: OrchestratorRunRequest -> The request containing the source GCS URI.
-
-    Returns:
-        None
-    """
-    with logger.contextualize(job_id=job_id):
-        logger.info(f"Starting background pipeline for job {job_id}")
-        try:
-            result = ekb_pipeline.run(request)
-
-            # Extract metadata for status update
-            metadata = {
-                "gcs_uri": result.gcs_uri,
-                "chunks_generated": result.chunks_generated,
-                "final_domain": result.final_domain,
-                "security_tier": result.security_tier,
-            }
-
-            job_service.update_job(
-                job_id=job_id,
-                status=JobStatus.SUCCESS,
-                message="Pipeline completed successfully.",
-                metadata=metadata,
-            )
-            logger.success(f"Job {job_id} completed successfully.")
-        except Exception as e:
-            logger.error(f"Job {job_id} failed: {e}")
-            job_service.update_job(
-                job_id=job_id,
-                status=JobStatus.ERROR,
-                message=f"Pipeline failed: {str(e)}",
-            )
+cloud_tasks_service = CloudTasksService()
 
 
 @app.post("/ingest", response_model=OrchestratorRunResponse)
 async def ingest_document(
-    request: OrchestratorRunRequest, background_tasks: BackgroundTasks
+    request: OrchestratorRunRequest, fastapi_req: Request
 ) -> OrchestratorRunResponse:
     """
-    Triggers the EKB pipeline asynchronously using a non-blocking job-based workflow.
+    Triggers the EKB pipeline by pushing a Cloud Task.
     Returns a Job ID for status tracking.
 
     Args:
         request: OrchestratorRunRequest -> The document URI to ingest.
-        background_tasks: BackgroundTasks -> FastAPI utility for background processing.
+        fastapi_req: Request -> FastAPI request object for url resolving.
 
     Returns:
         OrchestratorRunResponse -> The initial job status and ID.
@@ -103,12 +65,15 @@ async def ingest_document(
         filename = request.filename
         job_id = job_service.create_job(filename)
 
-        background_tasks.add_task(run_pipeline_task, job_id, request)
+        service_url = str(fastapi_req.base_url)
+        cloud_tasks_service.enqueue_ingestion_task(
+            job_id, request.model_dump(), service_url
+        )
 
         return OrchestratorRunResponse(
             job_id=job_id,
             status=JobStatus.PROCESSING,
-            message="File processing started. It might take up to 10 minutes to finish.",
+            message="File processing task enqueued successfully.",
         )
     except Exception as e:
         logger.error(f"Failed to initiate ingestion for {request.gcs_uri}: {e}")
@@ -136,3 +101,41 @@ async def get_status(job_id: str) -> JobStatusResponse:
 
     logger.debug(f"Status for {job_id}: {status.status.value}")
     return status
+
+
+@app.post("/task-handler")
+async def handle_task(payload: TaskPayload) -> dict:
+    """
+    Synchronous execution of the pipeline, triggered by Cloud Tasks.
+    This maintains an active HTTP connection so Cloud Run can scale horizontally
+    and allocate full CPU resources.
+    """
+    with logger.contextualize(job_id=payload.job_id):
+        logger.info(f"Received Cloud Task for job_id: {payload.job_id}")
+        try:
+            result = ekb_pipeline.run(payload.request)
+
+            # Extract metadata for status update
+            metadata = {
+                "gcs_uri": result.gcs_uri,
+                "chunks_generated": result.chunks_generated,
+                "final_domain": result.final_domain,
+                "security_tier": result.security_tier,
+            }
+
+            job_service.update_job(
+                job_id=payload.job_id,
+                status=JobStatus.SUCCESS,
+                message="Pipeline completed successfully.",
+                metadata=metadata,
+            )
+            logger.success(f"Job {payload.job_id} completed successfully.")
+            return {"status": "success"}
+        except Exception as e:
+            logger.error(f"Job {payload.job_id} failed: {e}")
+            job_service.update_job(
+                job_id=payload.job_id,
+                status=JobStatus.ERROR,
+                message=f"Pipeline failed: {str(e)}",
+            )
+            raise HTTPException(status_code=500, detail=str(e))
