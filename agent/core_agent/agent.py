@@ -1,3 +1,5 @@
+from google.adk.tools import load_artifacts
+
 from .builder import AgentBuilder, AppBuilder
 from .config import (
     GCP_CONFIG,
@@ -9,12 +11,12 @@ from .config import (
     GOOGLE_AUTH_CONFIG,
 )
 
-from google.adk.tools import load_artifacts
 from .tools.artifact_tools import (
     GetArtifactUriTool,
     ImportGcsToArtifactTool,
 )
 from .tools.kb_tools import TriggerEKBPipelineTool, CheckIngestionStatusTool
+from .tools.time_tools import GetCurrentTimeTool
 from .callbacks.ingestion_status import sync_ingestion_status
 from loguru import logger
 
@@ -31,6 +33,7 @@ skills_to_mount = [
     "knowledge-discovery",
 ]
 
+
 root_agent = (
     AgentBuilder(
         agent_config=AGENT_CONFIG,
@@ -46,6 +49,7 @@ root_agent = (
             ImportGcsToArtifactTool(),
             TriggerEKBPipelineTool(),
             CheckIngestionStatusTool(),
+            GetCurrentTimeTool(),
             load_artifacts,
         ]
     )

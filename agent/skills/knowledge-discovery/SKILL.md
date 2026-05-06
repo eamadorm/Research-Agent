@@ -1,74 +1,63 @@
 ---
 name: knowledge-discovery
-description: Expert protocol for high-fidelity data retrieval and analysis using a hybrid RAG + Long Context approach.
+description: Expert protocol for high-fidelity data retrieval and analysis using Contextual Anchoring and Parallel Discovery.
 ---
 
 ## Mandatory Execution Mode
+Trigger this skill for any research task or when the user's query is broad or vague. Use this to establish a factual baseline across all data sources.
 
-Trigger this skill when a user asks for broad research or specific analysis of a project, company, technology, or person within the enterprise.
-Examples:
-- "Tell me everything we know about project X"
-- "Give me the current state of project Y"
-- "Which projects use technology Z?"
-- "Analyze the stakeholders for project K"
+## Discovery Protocol
 
-## Hybrid Discovery Protocol (3 Phases)
+### Phase 1: Contextual Anchoring (The Hook)
+1.  **Semantic Search**: Execute `ekb_semantic_search`.
+2.  **Anchor Extraction**: Build a "Context Graph" from the results:
+    -   **Identities**: `project_name`, `project_id`, `document_id`, and `filename`.
+    -   **Context**: Capture the `document_summary` or `description`. These snippets are vital for identifying additional keywords for Phase 2.
+    -   **Entities**: Company names (clients/partners), technologies, and technical stacks.
+    -   **Relational Mapping**: If a company is identified, immediately pivot to find the projects they are involved in. Use these project names as primary anchors for Phase 2 discovery across all sources.
+    -   **People**: `uploader_email` and key stakeholders mentioned in descriptions.
+    -   **Locations**: `gcs_uri` (essential for technical deep-dives).
+3.  **Expansion**: If results are narrow, broaden the search using the extracted entities and keywords to find related entries before moving to Phase 2.
 
-### Phase 1: Semantic Anchoring
-1.  **Initial Search**: Call the `ekb_semantic_search` tool using the `query` parameter and the other mandatory parameters.
-    - **MANDATORY**: Strictly follow the tool's input schema definition (e.g., nesting parameters under a `request` object).
-2.  **Metadata Extraction**: Identify the following from the top results:
-    - `project_id`
-    - `domain`
-    - `document_id`
-    - `uploader_email` (Stakeholder)
-    - `latest` (Boolean)
+### Phase 2: Parallel Context Acquisition (Broad Search)
+Maximize information gathering by querying multiple sources in parallel. 
+*Efficiency Rule: Limit to a maximum of 2 concurrent requests per data source. DO NOT repeat the same tool call with the same parameters in the same session. Aim to find core data in the first turn.*
 
-### Phase 2: Metadata-based SQL Pivot
-1.  **Broad Discovery**: Once identifiers are found, call `execute_query` to retrieve all related documents.
-    - **MANDATORY**: Strictly follow the tool's input schema definition.
-    - **Example Query Pattern**:
-    ```sql
-    SELECT filename, gcs_uri, description, trust_level, uploader_email, ingested_at, latest
-    FROM `knowledge_base.documents_metadata`
-    WHERE (project_id = '<identified_project>' OR domain = '<identified_domain>')
-      AND latest = TRUE
-    ORDER BY ingested_at DESC
-    ```
-2.  **Synthesis**: Use the `description` (document summary) from the metadata to form a high-level understanding of the project's scope and history.
+1.  **Calendar (Broad Temporal Discovery)**:
+    -   **DEFAULT PROTOCOL**: Unless the user specifies a precise event query, you MUST perform two separate requests to establish a broad temporal baseline:
+        -   **Request 1 (Past)**: From [Current Date - 1 Month] to [Current Date]. Use `sort_order="desc"` to retrieve the nearest past events.
+        -   **Request 2 (Future)**: From [Current Date] to [Current Date + 1 Month]. Use `sort_order="asc"` to retrieve the nearest upcoming events.
+    -   **MANDATORY RESTRICTION**: In these first two requests, you MUST NOT include any parameters other than date filters and `sort_order`. 
+    -   **Relational Mapping**: Once all events in the window are retrieved, perform internal filtering to identify events related to the projects or companies found in Phase 1 (EKB).
+2.  **BigQuery (Structural Context)**:
+    -   **MANDATORY**: Query the `documents_metadata` table inside the `knowledge_base` dataset.
+    -   **Data Capture**: Retrieve and store all metadata, especially the **document summary/description**, linked to the identified project, domain, or company.
+3.  **Google Drive (Personal Context)**:
+    -   **Best Practice**: Perform searches using **single keywords** or very short phrases (e.g., search "Alpha" instead of "Project Alpha"). This avoids missing files with naming variations like "Alpha Follow-up" or "Project Continuation - Alpha".
+    -   **Keywords**: Use company names, technologies, stacks, and project names found in Phase 1.
+4.  **GCS (Raw Data Reference)**:
+    -   Identify and store specific `gcs_uri` references for high-relevance files found in the metadata.
 
-### Phase 3: Long Context Deep Analysis (Conditional)
-1.  **Trigger**: If the BigQuery metadata summaries are insufficient to answer the user's specific request or if deep analysis is required.
-2.  **Selection**: Identify up to **10** most relevant GCS URIs from the SQL results.
-3.  **Loading**: 
-    - For each selected URI:
-        - Call `import_gcs_to_artifact` using the `gcs_uri`.
-    - Call `load_artifacts` using the `filenames` list.
-    - **MANDATORY**: Strictly follow each tool's input schema definition.
-4.  **Analysis**: Perform the final analysis using the full document data.
+### Phase 3: Synthesis & Targeted Deep Dive (Escalation Path)
+If high-level summaries or metadata are insufficient for a comprehensive answer, follow this strict escalation order:
 
-## Standardized Output Format
+1.  **Level 1: EKB Deep-Dive (GCS)**:
+    -   Use `gcs_read_file` or equivalent tools to analyze the full content of high-relevance `gcs_uri` references found in Phase 1 and 2.
+    -   Prioritize technical specifications, architecture diagrams, and project charters stored in EKB.
+2.  **Level 2: Calendar Deep-Dive (Personal Context)**:
+    -   Identify any **documents or links** mentioned in the descriptions or attachments of relevant past meetings found in Phase 2.
+    -   Search for and read the content of these specific documents (using Drive or GCS tools) to capture meeting decisions, notes, or referenced data.
+3.  **Level 3: Drive Deep-Dive**:
+    -   If the information is still missing, proceed to search and read the full content of relevant Google Drive documents found in Phase 2 discovery.
+4.  **Level 4: Relationship Fallback (Implicit Mapping)**:
+    -   If direct project/company links are missing, analyze EKB metadata (descriptions, summaries, and tech stacks) for shared technologies, industry themes, or generalities.
+    -   Use these broader themes to re-evaluate the broad results found in Phase 2 (Calendar/Drive) to identify high-fidelity implicit relationships.
+5.  **Level 5: Final Conclusion**:
+    -   If the information is not found after all deep-dives (including implicit mapping), concisely state that the specific data was not found in the available Enterprise Knowledge Base or personal Drive. Do not hallucinate or guess.
 
-All discovery responses must follow this structure:
-
-### Summary
-[1-2 paragraphs summarizing the context and findings]
-
-### Key Points
-- [Bullet 1]
-- [Bullet 2]
-- [Bullet N...]
-
-### Stakeholders
-- [Stakeholder Name/Role 1]
-- [Stakeholder Name/Role 2]
-
-### Data Sources
-- [Filename] (Last Update: [Date], Owner: [Email/Name])
-- [Filename] (Last Update: [Date], Owner: [Email/Name])
-
----
-
-## Post-Discovery Interaction
-After presenting the EKB findings, **ALWAYS** ask:
-"I have completed the search in the Enterprise Knowledge Base. Would you like me to also search your personal data for additional context? If so, do you have a preference (Drive, personal buckets, or private BQ tables)? Searching across all sources may take some time."
+### MANDATORY OUTPUT STRUCTURE
+-   **Upcoming Meetings Extraction**: Identify and format all relevant meetings occurring after the current date found during Phase 2 discovery.
+-   **Synthesis & Output**: 
+    -   Cross-correlate findings into a unified narrative, resolving contradictions and deduplicating information.
+    -   **STRICT REFERENCE RULE**: In your final `## References` section, you MUST ONLY include the specific files and events from which data was explicitly extracted. Do NOT include broad discovery results or unused tool outputs.
+    -   **MANDATORY**: For broad research requests, format the final response strictly according to the **OUTPUT STRUCTURE** defined in the System Prompt. For specific questions, be concise but **ALWAYS** include the **## References** section.
