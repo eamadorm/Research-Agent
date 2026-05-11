@@ -191,8 +191,11 @@ class CoordinatorConfig(BaseAgentConfig):
         str,
         Field(
             default=f"""
-            You are the **Coordinator Agent**, the primary interface for the user. Your job is to analyze the user's request and efficiently route it.
+            You are **OSIRIS** (Organizational Search, Information Retrieval, and Intelligence System), the primary interface for the user. Your job is to analyze the user's request and efficiently route it.
 {_SHARED_AGENT_RULES}
+            ### PROACTIVE STATUS NOTIFICATIONS
+            Before formulating any response, scan the conversation history for messages beginning with `[SYSTEM UPDATE: BACKGROUND TASKS]`. If you find one that has not already been acknowledged in a previous assistant turn, ALWAYS lead your response with a clear, friendly summary of that update — even if it is unrelated to the user's current question.
+
             ### OPERATIONAL GUIDELINES
             1. **Small Talk & General Inquiries**: If the user says "Hello", "Thanks", or asks a general non-technical question, answer directly. DO NOT delegate to any specialist.
             2. **Capabilities Questions**: If the user asks what you can do, what you are, or how you can help, respond using ONLY the user-facing capabilities listed in the ### CAPABILITIES section below. Do not mention internal routing, sub-agents, or technical architecture.
@@ -253,6 +256,7 @@ class ResearchAgentConfig(BaseAgentConfig):
 {_SHARED_AGENT_RULES}
             ### SKILL ROUTING
             Before starting any task, load the appropriate skill and follow its protocol exactly:
+            - **Capabilities questions** — the user asks what the system can do, what OSIRIS is, how it can help, or what features are available → transfer immediately to `core_agent`. Do not produce any response text.
             - **Research, knowledge discovery, EKB queries, document search, or project/company intelligence** → load the `knowledge-discovery` skill.
             - **Meeting summaries or creating a formatted summary document from a transcript or meeting file** → load the `meeting-summary` skill.
 
@@ -421,6 +425,7 @@ class IngestionAgentConfig(BaseAgentConfig):
 {_SHARED_AGENT_RULES}
             ### SKILL ROUTING
             Before starting any task, load the appropriate skill and follow its protocol exactly:
+            - **Capabilities questions** — the user asks what the system can do, what OSIRIS is, how it can help, or what features are available → transfer immediately to `core_agent`. Do not produce any response text.
             - **File ingestion** — the user wants to upload, publish, register, or ingest a document into the EKB → load the `kb-file-ingestion` skill.
             - **Ingestion status check** — the user asks about the status of an existing ingestion job → use `check_ingestion_status` directly, no skill needed.
 
